@@ -8,9 +8,9 @@ from PIL import Image
 import matplotlib.pyplot as plt
 from matplotlib import font_manager
 
-# --- 1. ตั้งค่า Database (SQLite) ---
+# --- 1. ตั้งค่า Database ---
 def init_db():
-    # *** เปลี่ยนชื่อ DB เพื่อเริ่มกระดานใหม่ ***
+    # ใช้ V2 เหมือนเดิม
     conn = sqlite3.connect('tennis_court_v2.db') 
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS users 
@@ -36,7 +36,6 @@ def init_db():
     conn.close()
 
 def get_db_connection():
-    # *** ต้องเปลี่ยนชื่อตรงนี้ให้ตรงกันด้วย ***
     return sqlite3.connect('tennis_court_v2.db')
 
 # --- 2. Helper Functions ---
@@ -63,6 +62,14 @@ def get_coach_list():
         return []
     finally:
         conn.close()
+
+def get_users_dict():
+    # ดึงรายชื่อสมาชิกทั้งหมดมาทำ Dropdown ให้ Admin
+    conn = get_db_connection()
+    users = pd.read_sql("SELECT phone, name FROM users", conn)
+    conn.close()
+    # สร้าง Dict {เบอร์โทร: ชื่อ (เบอร์โทร)}
+    return {row['phone']: f"{row['name']} ({row['phone']})" for _, row in users.iterrows()}
 
 # --- 3. Config ---
 COURTS = {
@@ -132,7 +139,7 @@ def main():
         try:
             bookings = pd.read_sql(query, conn)
         except Exception:
-            bookings = pd.DataFrame() # Fallback ถ้า DB มีปัญหา
+            bookings = pd.DataFrame()
         conn.close()
 
         schedule_data = {c_name: ["ว่าง"] * len(TIMES) for c_id, c_name in COURTS.items()}
@@ -206,8 +213,10 @@ def main():
         
         if pwd == "1234":
             st.success("Access Granted")
-            tab1, tab2, tab3, tab4 = st.tabs(["⏳ อนุมัติการจอง", "📸 Export รูปภาพ", "👥 จัดการครูฝึก", "📋 ประวัติทั้งหมด"])
+            # เพิ่ม Tab ใหม่ "📝 จองให้ลูกค้า"
+            tab1, tab2, tab3, tab4, tab5 = st.tabs(["⏳ อนุมัติการจอง", "📝 จองให้ลูกค้า (Course)", "📸 Export รูปภาพ", "👥 จัดการครูฝึก", "📋 ประวัติทั้งหมด"])
             
+            # --- Tab 1: อนุมัติการจอง ---
             with tab1:
                 st.header("รายการรออนุมัติ (Pending)")
                 conn = get_db_connection()
@@ -247,7 +256,49 @@ def main():
                                     st.rerun()
                 conn.close()
 
+            # --- Tab 2 (ใหม่): จองให้ลูกค้า (Course/VIP) ---
             with tab2:
+                st.header("เพิ่มการจองให้ลูกค้า (ไม่ต้องใช้สลิป)")
+                st.caption("สำหรับลูกค้า Course, VIP หรือการจองผ่านโทรศัพท์ (สถานะจะเป็น Confirmed ทันที)")
+                
+                users_dict = get_users_dict()
+                
+                with st.form("admin_booking_form"):
+                    # เลือกลูกค้าจากรายชื่อที่มี
+                    selected_user_phone = st.selectbox("เลือกลูกค้า", list(users_dict.keys()), format_func=lambda x: users_dict[x])
+                    
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        adm_date = st.date_input("วันที่", datetime.now())
+                        adm_court = st.selectbox("สนาม", list(COURTS.keys()), format_func=lambda x: COURTS[x])
+                    with c2:
+                        adm_time = st.selectbox("เวลา", TIMES)
+                        adm_coach = st.selectbox("ครูฝึก", get_coach_list())
+                        
+                    if st.form_submit_button("ยืนยันการจอง (Admin Override)"):
+                        conn = get_db_connection()
+                        # เช็คชน
+                        exist = conn.execute("""
+                            SELECT * FROM bookings 
+                            WHERE date=? AND time_slot=? AND court_id=? AND status='confirmed'
+                        """, (str(adm_date), adm_time, adm_court)).fetchone()
+                        
+                        if exist:
+                            st.error("❌ เวลานี้ไม่ว่าง มีคนจองแล้ว")
+                        else:
+                            # Insert แบบ confirmed เลย และไม่มี slip
+                            conn.execute("""
+                                INSERT INTO bookings 
+                                (user_phone, court_id, coach, date, time_slot, status, slip_image) 
+                                VALUES (?,?,?,?,?,?,?)
+                            """, (selected_user_phone, adm_court, adm_coach, str(adm_date), adm_time, 'confirmed', None))
+                            conn.commit()
+                            st.success(f"✅ จองให้คุณ {users_dict[selected_user_phone]} สำเร็จ!")
+                            # ไม่ต้อง rerun ก็ได้ หรือจะ rerun เพื่อเคลียร์ฟอร์มก็ได้
+                        conn.close()
+
+            # --- Tab 3: Export รูปภาพ ---
+            with tab3:
                 export_date = st.date_input("เลือกวันที่ Export", datetime.now())
                 if st.button("สร้างรูปตารางงาน"):
                     font_path = 'Sarabun-Regular.ttf'
@@ -297,7 +348,8 @@ def main():
                             cell.set_edgecolor('white')
                     st.pyplot(fig)
 
-            with tab3:
+            # --- Tab 4: จัดการครูฝึก ---
+            with tab4:
                 conn = get_db_connection()
                 try:
                     coaches_df = pd.read_sql("SELECT * FROM coaches", conn)
@@ -319,7 +371,8 @@ def main():
                         conn.commit()
                         st.rerun()
 
-            with tab4:
+            # --- Tab 5: ประวัติทั้งหมด ---
+            with tab5:
                 conn = get_db_connection()
                 all_bookings = pd.read_sql("SELECT * FROM bookings ORDER BY date DESC", conn)
                 st.dataframe(all_bookings)
