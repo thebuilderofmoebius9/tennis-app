@@ -10,7 +10,6 @@ from matplotlib import font_manager
 
 # --- 1. ตั้งค่า Database ---
 def init_db():
-    # ใช้ V2 เหมือนเดิม
     conn = sqlite3.connect('tennis_court_v2.db') 
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS users 
@@ -64,11 +63,9 @@ def get_coach_list():
         conn.close()
 
 def get_users_dict():
-    # ดึงรายชื่อสมาชิกทั้งหมดมาทำ Dropdown ให้ Admin
     conn = get_db_connection()
     users = pd.read_sql("SELECT phone, name FROM users", conn)
     conn.close()
-    # สร้าง Dict {เบอร์โทร: ชื่อ (เบอร์โทร)}
     return {row['phone']: f"{row['name']} ({row['phone']})" for _, row in users.iterrows()}
 
 # --- 3. Config ---
@@ -213,7 +210,6 @@ def main():
         
         if pwd == "1234":
             st.success("Access Granted")
-            # เพิ่ม Tab ใหม่ "📝 จองให้ลูกค้า"
             tab1, tab2, tab3, tab4, tab5 = st.tabs(["⏳ อนุมัติการจอง", "📝 จองให้ลูกค้า (Course)", "📸 Export รูปภาพ", "👥 จัดการครูฝึก", "📋 ประวัติทั้งหมด"])
             
             # --- Tab 1: อนุมัติการจอง ---
@@ -244,29 +240,27 @@ def main():
                                 st.write(f"ลูกค้า: {row['user_name']} ({row['user_contact']})")
                                 st.write(f"ครูฝึก: {row['coach']}")
                                 cb1, cb2 = st.columns(2)
-                                if cb1.button("✅ อนุมัติ", key=f"app_{row['id']}"):
-                                    conn.execute("UPDATE bookings SET status='confirmed' WHERE id=?", (row['id'],))
+                                
+                                # ปุ่มอนุมัติ (แก้ให้ลบรูปด้วย)
+                                if cb1.button("✅ อนุมัติ (ลบรูป)", key=f"app_{row['id']}"):
+                                    # UPDATE status = 'confirmed' AND slip_image = NULL
+                                    conn.execute("UPDATE bookings SET status='confirmed', slip_image=NULL WHERE id=?", (row['id'],))
                                     conn.commit()
-                                    st.success("อนุมัติแล้ว")
+                                    st.success("อนุมัติเรียบร้อย (ลบรูปสลิปออกจาก Server แล้ว)")
                                     st.rerun()
-                                if cb2.button("❌ ลบ", key=f"rej_{row['id']}"):
+                                    
+                                if cb2.button("❌ ลบรายการ", key=f"rej_{row['id']}"):
                                     conn.execute("DELETE FROM bookings WHERE id=?", (row['id'],))
                                     conn.commit()
-                                    st.error("ลบแล้ว")
+                                    st.error("ลบรายการแล้ว")
                                     st.rerun()
                 conn.close()
 
-            # --- Tab 2 (ใหม่): จองให้ลูกค้า (Course/VIP) ---
             with tab2:
                 st.header("เพิ่มการจองให้ลูกค้า (ไม่ต้องใช้สลิป)")
-                st.caption("สำหรับลูกค้า Course, VIP หรือการจองผ่านโทรศัพท์ (สถานะจะเป็น Confirmed ทันที)")
-                
                 users_dict = get_users_dict()
-                
                 with st.form("admin_booking_form"):
-                    # เลือกลูกค้าจากรายชื่อที่มี
                     selected_user_phone = st.selectbox("เลือกลูกค้า", list(users_dict.keys()), format_func=lambda x: users_dict[x])
-                    
                     c1, c2 = st.columns(2)
                     with c1:
                         adm_date = st.date_input("วันที่", datetime.now())
@@ -274,30 +268,24 @@ def main():
                     with c2:
                         adm_time = st.selectbox("เวลา", TIMES)
                         adm_coach = st.selectbox("ครูฝึก", get_coach_list())
-                        
-                    if st.form_submit_button("ยืนยันการจอง (Admin Override)"):
+                    if st.form_submit_button("ยืนยันการจอง"):
                         conn = get_db_connection()
-                        # เช็คชน
                         exist = conn.execute("""
                             SELECT * FROM bookings 
                             WHERE date=? AND time_slot=? AND court_id=? AND status='confirmed'
                         """, (str(adm_date), adm_time, adm_court)).fetchone()
-                        
                         if exist:
-                            st.error("❌ เวลานี้ไม่ว่าง มีคนจองแล้ว")
+                            st.error("❌ เวลานี้ไม่ว่าง")
                         else:
-                            # Insert แบบ confirmed เลย และไม่มี slip
                             conn.execute("""
                                 INSERT INTO bookings 
                                 (user_phone, court_id, coach, date, time_slot, status, slip_image) 
                                 VALUES (?,?,?,?,?,?,?)
                             """, (selected_user_phone, adm_court, adm_coach, str(adm_date), adm_time, 'confirmed', None))
                             conn.commit()
-                            st.success(f"✅ จองให้คุณ {users_dict[selected_user_phone]} สำเร็จ!")
-                            # ไม่ต้อง rerun ก็ได้ หรือจะ rerun เพื่อเคลียร์ฟอร์มก็ได้
+                            st.success(f"✅ จองสำเร็จ!")
                         conn.close()
 
-            # --- Tab 3: Export รูปภาพ ---
             with tab3:
                 export_date = st.date_input("เลือกวันที่ Export", datetime.now())
                 if st.button("สร้างรูปตารางงาน"):
@@ -348,7 +336,6 @@ def main():
                             cell.set_edgecolor('white')
                     st.pyplot(fig)
 
-            # --- Tab 4: จัดการครูฝึก ---
             with tab4:
                 conn = get_db_connection()
                 try:
@@ -371,7 +358,6 @@ def main():
                         conn.commit()
                         st.rerun()
 
-            # --- Tab 5: ประวัติทั้งหมด ---
             with tab5:
                 conn = get_db_connection()
                 all_bookings = pd.read_sql("SELECT * FROM bookings ORDER BY date DESC", conn)
