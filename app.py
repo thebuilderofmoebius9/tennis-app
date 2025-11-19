@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime
 import matplotlib.pyplot as plt
 import seaborn as sns
 
@@ -90,7 +90,6 @@ def main():
         conn.close()
 
         # สร้างตาราง Grid แสดงผล
-        # แกน Y เป็นเวลา, แกน X เป็นสนาม
         schedule_data = {c_name: ["ว่าง"] * len(TIMES) for c_id, c_name in COURTS.items()}
         df_schedule = pd.DataFrame(schedule_data, index=TIMES)
 
@@ -102,7 +101,6 @@ def main():
             if row['coach'] != 'ไม่รับครู':
                 status_text += f"\n({row['coach']})"
             
-            # หา index ของเวลา
             try:
                 df_schedule.at[t_idx, c_name] = status_text
             except:
@@ -126,8 +124,8 @@ def main():
                 coach_choice = st.selectbox("เลือกครูฝึก", COACHES)
             
             if st.button("ยืนยันการจอง"):
-                # เช็คว่าว่างไหม
                 conn = get_db_connection()
+                # เช็คว่าว่างไหม
                 exist = conn.execute("SELECT * FROM bookings WHERE date=? AND time_slot=? AND court_id=?", 
                                      (str(selected_date), time_choice, court_choice)).fetchone()
                 
@@ -138,7 +136,7 @@ def main():
                                  (user_session[0], court_choice, coach_choice, str(selected_date), time_choice))
                     conn.commit()
                     st.success("จองสำเร็จ!")
-                    st.experimental_rerun() # รีเฟรชหน้า
+                    st.rerun() # <--- แก้ตรงนี้เป็น st.rerun() แล้วครับ
                 conn.close()
 
     # --- ส่วนที่ 3: Admin Dashboard ---
@@ -146,10 +144,9 @@ def main():
         st.warning("ส่วนสำหรับผู้ดูแลระบบ")
         pwd = st.text_input("รหัสผ่าน Admin", type="password")
         
-        if pwd == "1234": # รหัสผ่านง่ายๆ เปลี่ยนได้
+        if pwd == "1234":
             st.success("Login สำเร็จ")
             
-            # Export Image Logic
             export_date = st.date_input("เลือกวันที่ต้องการ Export รูปภาพ", datetime.now())
             
             if st.button("สร้างรูปภาพตารางงาน"):
@@ -157,19 +154,16 @@ def main():
                 bookings_df = pd.read_sql(f"SELECT * FROM bookings WHERE date = '{export_date}'", conn)
                 conn.close()
                 
-                # สร้าง Heatmap จำลองด้วย Matplotlib
                 fig, ax = plt.subplots(figsize=(10, 6))
-                
-                # เตรียมข้อมูลทำกราฟ
                 data_matrix = []
                 for t in TIMES:
                     row = []
                     for c_id in COURTS.keys():
                         found = bookings_df[(bookings_df['time_slot'] == t) & (bookings_df['court_id'] == c_id)]
                         if not found.empty:
-                            val = 1 # จองแล้ว
+                            val = 1
                         else:
-                            val = 0 # ว่าง
+                            val = 0
                         row.append(val)
                     data_matrix.append(row)
                 
